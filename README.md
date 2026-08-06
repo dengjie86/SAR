@@ -22,7 +22,15 @@ SAR depends on
 
 - Python 3
 - [PyTorch](https://pytorch.org/) = 1.9.0
-- [timm](https://github.com/rwightman/pytorch-image-models)==0.6.11
+- [timm](https://github.com/huggingface/pytorch-image-models)==1.0.28 for current Kaggle/Python runtimes
+
+The original environment used `timm==0.6.11`, but that release raises a `MaxxVitConvCfg` mutable-default error on current Kaggle Python. In a Kaggle notebook install the compatible version with:
+
+```
+!pip install --upgrade timm==1.0.28
+```
+
+The model identifiers are pinned in `main.py` to the same ResNet50-GN and ViT-Base pretrained weight variants used by the original code, so upgrading `timm` does not silently select a different default checkpoint.
 
 
 **Data preparation**:

@@ -28,6 +28,23 @@ from sam import SAM
 import models.Res as Resnet
 
 
+TIMM_RESNET50_GN = 'resnet50_gn.a1h_in1k'
+TIMM_VITBASE = 'vit_base_patch16_224.augreg_in21k_ft_in1k'
+
+
+def import_timm():
+    """Import a Kaggle-compatible timm version with a useful legacy error."""
+    try:
+        import timm
+    except ValueError as error:
+        if 'mutable default' in str(error) and 'MaxxVitConvCfg' in str(error):
+            raise RuntimeError(
+                'timm 0.6.x is incompatible with the current Python runtime. '
+                'Install timm==1.0.28 and retry.'
+            ) from error
+        raise
+    return timm
+
 
 def validate(val_loader, model, criterion, args, mode='eval'):
     batch_time = AverageMeter('Time', ':6.3f')
@@ -200,12 +217,12 @@ if __name__ == '__main__':
         # build model for adaptation
         if args.method in ['tent', 'eata', 'sar', 'no_adapt']:
             if args.model == "resnet50_gn_timm":
-                import timm
-                net = timm.create_model('resnet50_gn', pretrained=True)
+                timm = import_timm()
+                net = timm.create_model(TIMM_RESNET50_GN, pretrained=True)
                 args.lr = (0.00025 / 64) * bs * 2 if bs < 32 else 0.00025
             elif args.model == "vitbase_timm":
-                import timm
-                net = timm.create_model('vit_base_patch16_224', pretrained=True)
+                timm = import_timm()
+                net = timm.create_model(TIMM_VITBASE, pretrained=True)
                 args.lr = (0.001 / 64) * bs
             elif args.model == "resnet50_bn_torch":
                 net = Resnet.__dict__['resnet50'](pretrained=True)
