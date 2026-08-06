@@ -10,6 +10,7 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
 import torch.utils.data
+from PIL import Image
 
 
 normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
@@ -34,6 +35,30 @@ rotation_te_transforms = te_transforms
 common_corruptions = ['gaussian_noise', 'shot_noise', 'impulse_noise', 'defocus_blur', 'glass_blur',
 	                    'motion_blur', 'zoom_blur', 'snow', 'frost', 'fog',
 	                    'brightness', 'contrast', 'elastic_transform', 'pixelate', 'jpeg_compression']
+
+
+def select_imagenet_c_transform(sample_path, resize_mode='auto'):
+    """Choose preprocessing without changing standard ImageNet-C behavior.
+
+    The official ImageNet-C data are already large enough for a 224-pixel
+    center crop. Some mirrors contain a 64x64 edition instead. In ``auto``
+    mode those small images are first resized with the standard ImageNet
+    evaluation transform so that they are not zero-padded by CenterCrop.
+    """
+    if resize_mode not in {'auto', 'always', 'never'}:
+        raise ValueError(
+            "resize_mode must be one of 'auto', 'always', or 'never', "
+            f"got {resize_mode!r}"
+        )
+
+    with Image.open(sample_path) as image:
+        image_size = image.size
+
+    should_resize = resize_mode == 'always' or (
+        resize_mode == 'auto' and min(image_size) < 224
+    )
+    transform = te_transforms if should_resize else te_transforms_imageC
+    return transform, image_size, should_resize
 
 
 class ImagePathFolder(datasets.ImageFolder):
@@ -178,23 +203,31 @@ def prepare_train_dataloader(args, trset=None, sampler=None):
     return trloader, train_sampler
 
 
-def prepare_test_data(args, use_transforms=True):	
-    if args.corruption == 'original':
-        te_transforms_local = te_transforms if use_transforms else None
-    elif args.corruption in common_corruptions:
-        te_transforms_local = te_transforms_imageC if use_transforms else None
-    else:
-        assert False, NotImplementedError
+def prepare_test_data(args, use_transforms=True):
     if not hasattr(args, 'corruption') or args.corruption == 'original':
         print('Test on the original test set')
         validdir = os.path.join(args.data, 'val')
+        te_transforms_local = te_transforms if use_transforms else None
         teset = SelectedRotateImageFolder(validdir, te_transforms_local, original=False, rotation=False,
                                                     rotation_transform=rotation_te_transforms)
     elif args.corruption in common_corruptions:
         print('Test on %s level %d' %(args.corruption, args.level))
         validdir = os.path.join(args.data_corruption, args.corruption, str(args.level))
-        teset = SelectedRotateImageFolder(validdir, te_transforms_local, original=False, rotation=False,
+        # Build the ImageFolder once, then inspect its first sample. This avoids
+        # scanning large corruption folders twice merely to detect resolution.
+        teset = SelectedRotateImageFolder(validdir, None, original=False, rotation=False,
                                                     rotation_transform=rotation_te_transforms)
+        if use_transforms:
+            resize_mode = getattr(args, 'corruption_resize', 'auto')
+            te_transforms_local, image_size, should_resize = select_imagenet_c_transform(
+                teset.samples[0][0], resize_mode=resize_mode
+            )
+            teset.transform = te_transforms_local
+            action = 'resize to 256 then center-crop' if should_resize else 'center-crop only'
+            print(
+                'Detected ImageNet-C input size %dx%d; preprocessing: %s to 224x224.'
+                % (image_size[0], image_size[1], action)
+            )
     else:
         raise Exception('Corruption not found!')
         

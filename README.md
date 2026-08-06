@@ -22,18 +22,37 @@ SAR depends on
 
 - Python 3
 - [PyTorch](https://pytorch.org/) = 1.9.0
-- [timm](https://github.com/rwightman/pytorch-image-models)==0.6.11
+- [timm](https://github.com/huggingface/pytorch-image-models)==1.0.28 for current Kaggle/Python runtimes
+
+The original environment used `timm==0.6.11`, but that release raises a `MaxxVitConvCfg` mutable-default error on current Kaggle Python. In a Kaggle notebook install the compatible version with:
+
+```
+!pip install --upgrade timm==1.0.28
+```
+
+The model identifiers are pinned in `main.py` to the same ResNet50-GN and ViT-Base pretrained weight variants used by the original code, so upgrading `timm` does not silently select a different default checkpoint.
 
 
 **Data preparation**:
 
-This repository contains code for evaluation on [ImageNet-C 🔗](https://arxiv.org/abs/1903.12261) with ResNet-50 and VitBase. But feel free to use your own data and models!
+This repository contains code for evaluation on [ImageNet-C 🔗](https://arxiv.org/abs/1903.12261) with ResNet-50 and VitBase. It also accepts 64x64 ImageNet-C mirrors by automatically applying the standard ImageNet resize-and-crop preprocessing. But feel free to use your own data and models!
 
 - Step 1: Download [ImageNet-C 🔗](https://github.com/hendrycks/robustness) dataset from [here 🔗](https://zenodo.org/record/2235448#.YpCSLxNBxAc). 
 
 - Step 2: Put IamgeNet-C at "--data_corruption".
 
 - Step 3 [optional, for EATA]: Put ImageNet **test/val set**  at  "--data".
+
+The expected corruption layout is unchanged for both standard and 64x64 data:
+
+```
+/path/to/imagenet-c/
+├── gaussian_noise/5/<class>/*.JPEG
+├── shot_noise/5/<class>/*.JPEG
+└── ...
+```
+
+With the 64x64 Kaggle mirror, `--data_corruption` should point to the directory that directly contains `gaussian_noise`, `shot_noise`, and the other corruption folders. The default `--corruption_resize auto` detects a small sample and upsamples it before the 224x224 center crop. Use `--corruption_resize never` only to reproduce the repository's former zero-padding behavior.
 
 
 
@@ -62,6 +81,21 @@ outputs = adapt_model(inputs)  # now it infers and adapts!
 ```
 python3 main.py --data_corruption /path/to/imagenet-c --exp_type [normal/bs1/mix_shifts/label_shifts] --method [no_adapt/tent/eata/sar] --model [resnet50_gn_timm/vitbase_timm] --output /output/dir
 ```
+
+For example, a Kaggle smoke test on only Gaussian noise can use:
+
+```
+python3 main.py \
+  --data_corruption /kaggle/input/imagenet-c/ImageNet-C \
+  --exp_type normal \
+  --method sar \
+  --model resnet50_gn_timm \
+  --test_batch_size 16 \
+  --corruptions gaussian_noise \
+  --output /kaggle/working/sar-results
+```
+
+Omit `--corruptions gaussian_noise` to evaluate all 15 corruption types. Accuracy measured on a 64x64 mirror is useful for comparing methods under the same preprocessing, but it is not directly comparable with the paper's standard-resolution ImageNet-C numbers.
 
 '--exp_type' is choosen from:
 
