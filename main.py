@@ -2,30 +2,28 @@
 Copyright to SAR Authors, ICLR 2023 Oral (notable-top-5%)
 built upon on Tent and EATA code.
 """
-from logging import debug
 import os
 import time
 import argparse
-import json
 import random
 import numpy as np
-from pycm import *
 
 import math
-from typing import ValuesView
 
 from utils.utils import get_logger
-from dataset.selectedRotateImageFolder import prepare_test_data
+from dataset.selectedRotateImageFolder import (
+    common_corruptions as IMAGENET_C_CORRUPTIONS,
+    prepare_test_data,
+)
 from utils.cli_utils import *
 
 import torch    
-import torch.nn.functional as F
+import torch.nn as nn
 
 import tent
 import eata
 import sar
 from sam import SAM
-import timm
 
 import models.Res as Resnet
 
@@ -91,12 +89,28 @@ def get_args():
     # corruption settings
     parser.add_argument('--level', default=5, type=int, help='corruption level of test(val) set.')
     parser.add_argument('--corruption', default='gaussian_noise', type=str, help='corruption type of test(val) set.')
+    parser.add_argument(
+        '--corruptions',
+        nargs='+',
+        choices=IMAGENET_C_CORRUPTIONS,
+        default=None,
+        help='optional corruption subset; by default all 15 ImageNet-C corruptions are evaluated',
+    )
+    parser.add_argument(
+        '--corruption_resize', '--corruption-resize',
+        choices=['auto', 'always', 'never'],
+        default='auto',
+        help=(
+            'preprocessing for corrupted images: auto resizes inputs smaller than 224 pixels, '
+            'always forces standard resize+crop, and never preserves the original center-crop-only behavior'
+        ),
+    )
 
     # eata settings
     parser.add_argument('--fisher_size', default=2000, type=int, help='number of samples to compute fisher information matrix.')
     parser.add_argument('--fisher_alpha', type=float, default=2000., help='the trade-off between entropy and regularization loss, in Eqn. (8)')
     parser.add_argument('--e_margin', type=float, default=math.log(1000)*0.40, help='entropy margin E_0 in Eqn. (3) for filtering reliable samples')
-    parser.add_argument('--d_margin', type=float, default=0.05, help='\epsilon in Eqn. (5) for filtering redundant samples')
+    parser.add_argument('--d_margin', type=float, default=0.05, help='epsilon in Eqn. (5) for filtering redundant samples')
 
     # Exp Settings
     parser.add_argument('--method', default='sar', type=str, help='no_adapt, tent, eata, sar')
@@ -128,11 +142,11 @@ if __name__ == '__main__':
     logger = get_logger(name="project", output_directory=args.output, log_name=args.logger_name, debug=False) 
         
     
-    common_corruptions = ['gaussian_noise', 'shot_noise', 'impulse_noise', 'defocus_blur', 'glass_blur', 'motion_blur', 'zoom_blur', 'snow', 'frost', 'fog', 'brightness', 'contrast', 'elastic_transform', 'pixelate', 'jpeg_compression']
+    active_corruptions = list(args.corruptions or IMAGENET_C_CORRUPTIONS)
 
     if args.exp_type == 'mix_shifts':
         datasets = []
-        for cpt in common_corruptions:
+        for cpt in active_corruptions:
             args.corruption = cpt
             logger.info(args.corruption)
 
@@ -147,7 +161,7 @@ if __name__ == '__main__':
         mixed_dataset = ConcatDataset(datasets)
         logger.info(f"length of mixed dataset us {len(mixed_dataset)}")
         val_loader = torch.utils.data.DataLoader(mixed_dataset, batch_size=args.test_batch_size, shuffle=args.if_shuffle, num_workers=args.workers, pin_memory=True)
-        common_corruptions = ['mix_shifts']
+        active_corruptions = ['mix_shifts']
     
     if args.exp_type == 'bs1':
         args.test_batch_size = 1
@@ -160,7 +174,7 @@ if __name__ == '__main__':
 
     acc1s, acc5s = [], []
     ir = args.imbalance_ratio
-    for corrupt in common_corruptions:
+    for corrupt in active_corruptions:
         args.corruption = corrupt
         bs = args.test_batch_size
         args.print_freq = 50000 // 20 // bs
@@ -186,9 +200,11 @@ if __name__ == '__main__':
         # build model for adaptation
         if args.method in ['tent', 'eata', 'sar', 'no_adapt']:
             if args.model == "resnet50_gn_timm":
+                import timm
                 net = timm.create_model('resnet50_gn', pretrained=True)
                 args.lr = (0.00025 / 64) * bs * 2 if bs < 32 else 0.00025
             elif args.model == "vitbase_timm":
+                import timm
                 net = timm.create_model('vit_base_patch16_224', pretrained=True)
                 args.lr = (0.001 / 64) * bs
             elif args.model == "resnet50_bn_torch":
